@@ -1,0 +1,357 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+        <title>tree-treemap</title>
+        <link rel="stylesheet" href="../css/treemap.css" />
+        <style type="text/css">
+            g.node {
+                font-family: Verdana, Helvetica;
+                font-size: 12px;
+                font-weight: bold;
+                cursor: pointer
+            }         
+            circle.node-dot {
+                fill: lightsalmon;
+                stroke: red;
+                stroke-width: 1px;;
+            }          
+            circle.hover {
+                fill: darkblue;
+            }           
+            path.link {
+                fill: none;
+                stroke: gray;
+            }           
+            path.selected {
+                stroke: darkred;
+                fill: none;
+                stroke-width: 5px;
+            }
+            #c{
+                width: 100%;
+                height: 500px;
+                margin: 15px auto;
+            }
+            #tree-container{
+                width: 750px;
+                height:auto;
+                margin:5px auto;
+            }           
+        </style>
+    </head>
+    <body>
+        <h3>tree和treemap的交互，仅显示对应的父节点和兄弟节点</h3>
+        <div id="c" style="width:auto; height:auto; border:1px solid #3CF">
+            <div id="tree-container"></div>
+        </div>
+
+        <div style="clear:both ;width:100%;height:auto;border:1px solid #000; position: relative">
+            <button class='first active' id='size'>Size</button><button class='last' id='count'>Count</button>
+            <div id="treemapBox"></div>
+        </div>
+
+        <script type="text/javascript" src="../jquery/jquery-1.7.2.js"></script>
+        <script type="text/javascript" src="../jquery/underscore-min.js"></script>
+        <script type="text/javascript" src="../jquery/d3.v2.min.js"></script>
+
+        <script type="text/javascript">
+            var ui,size,tree,root,svgRoot;
+            var i = 0;
+            var diagonal = d3.svg.diagonal().projection(function(d) { return [d.y, d.x];});
+            
+            function visit(parent, visitFn, childrenFn)
+            {
+                if (!parent) return;
+
+                visitFn(parent);
+
+                var children = childrenFn(parent);
+                if (children) {
+                    var count = children.length;
+                    for(var i = 0; i< count; i++) {
+                        visit(children[i], visitFn, childrenFn);
+                    }
+                }
+            }
+            
+            function buildTree(containerName, treeData, customOptions)
+            {
+                // build the options object
+                var options = $.extend({
+                      nodeRadius: 6, fontSize: 15
+                }, customOptions);
+
+
+                // Calculate total nodes, max label length
+                var totalNodes = 0;
+                var maxLabelLength = 0;
+                visit(treeData, function(d)
+                {
+                    totalNodes++;
+                    maxLabelLength = Math.max(d.name.length, maxLabelLength);
+                }, function(d)
+                {
+                    return d.children && d.children.length > 0 ? d.children : null;
+                });
+
+                // size of the diagram
+                size = { width:$(containerName).width(), height:150+totalNodes * 25};
+
+                tree = d3.layout.tree()
+                .sort(null)
+                .size([size.height, size.width-maxLabelLength * options.fontSize])
+                .children(function(d)
+                {
+                    return (!d.children || d.children.length === 0) ? null : d.children;
+                });
+
+                var nodes = tree.nodes(treeData);
+                var links = tree.links(nodes);
+    
+                //var svgRoot = d3.select(containerName)
+                svgRoot = d3.select(containerName)
+                .append("svg:svg").attr("width", size.width).attr("height", size.height);
+                //alert(size.width+"--"+size.height);
+                // Add the clipping path
+                svgRoot.append("svg:clipPath").attr("id", "clipper")
+                .append("svg:rect")
+                .attr('id', 'clip-rect');
+
+                var layoutRoot = svgRoot
+                .append("svg:g")
+                .attr("class", "container")
+                .attr("transform", "translate(" + maxLabelLength + ",0)");
+
+                var linkGroup = layoutRoot.append("svg:g");
+                linkGroup.selectAll("path.link")
+                .data(links)
+                .enter()
+                .append("svg:path")
+                .attr("class", "link")
+                .attr("d", diagonal);
+
+                var animGroup = layoutRoot.append("svg:g")
+                .attr("clip-path", "url(#clipper)");
+                
+                var nodeGroup = layoutRoot.selectAll("g.node")
+                .data(nodes)
+                .enter()
+                .append("svg:g")
+                .attr("class", "node")
+                .attr("transform", function(d)
+                {
+                    return "translate(" + d.y + "," + d.x + ")";
+                });
+
+                // Cache the UI elements
+                ui = {
+                    svgRoot: svgRoot,
+                    nodeGroup: nodeGroup,
+                    linkGroup: linkGroup,
+                    animGroup: animGroup
+                };
+
+                nodeGroup.append("svg:circle")
+                .attr("class", "node-dot")
+                .attr("r", options.nodeRadius);
+
+                nodeGroup.append("svg:text")
+                .attr("text-anchor","start")
+//                .attr("text-anchor", function(d)
+//                {
+//                    return d.children ? "end" : "start";
+//                })
+                .attr("dx", function(d)
+                {
+                    var gap =options.nodeRadius;
+                    return d.children ?  -gap : -gap;
+                })             
+                .attr("dy", 18 )
+                .text(function(d)
+                {
+                    return d.name;
+                });
+            }
+            
+            function highlightLinks(nd){
+                // Walk parent chain
+                var ancestors = [];
+                var parent = nd;
+                while (!_.isUndefined(parent)) {
+                    ancestors.push(parent);
+                    parent = parent.parent;
+                }
+                //alert('block clicked, function triggers!');
+                // Get the matched links
+                var matchedLinks = [];
+                ui.linkGroup.selectAll('path.link')
+                .filter(function(d, i)
+                {
+                    return _.any(ancestors, function(p)
+                    {
+                        return p === d.target;
+                    });
+                })
+                .each(function(d)
+                {
+                    matchedLinks.push(d);
+                });
+                //alert(matchedLinks);
+                animateParentChain(matchedLinks);
+            }
+            
+            function animateParentChain(links)
+            {
+                var linkRenderer = d3.svg.diagonal()
+                .projection(function(d)
+                {
+                    return [d.y, d.x];
+                });
+
+                // Links
+                ui.animGroup.selectAll("path.selected")
+                .data([])
+                .exit().remove();
+
+                ui.animGroup
+                .selectAll("path.selected")
+                .data(links)
+                .enter().append("svg:path")
+                .attr("class", "selected")
+                .attr("d", linkRenderer);
+
+                // Animate the clipping path
+                var overlayBox = ui.svgRoot.node().getBBox();
+                ui.svgRoot.select("#clip-rect")
+                .attr("x", overlayBox.x + overlayBox.width)
+                .attr("y", overlayBox.y)
+                .attr("width", 0)
+                .attr("height", overlayBox.height)
+                .transition().duration(500)
+                .attr("x", overlayBox.x)
+                .attr("width", overlayBox.width);
+            } 
+            
+            d3.json("branch.json", function(json) {
+               //create tree
+               buildTree("#tree-container", json);
+               highlightLinks(json.children[0].children[0].children[2]);
+            });
+
+            //create a treemap
+            var  width = $('#treemapBox').width()-12,
+            height = 500,
+            color = d3.scale.category20();
+
+            var treemap = d3.layout.treemap()
+            .size([width, height])
+            .sticky(true)
+            .value(function(d) {return d.size;});
+
+            var div = d3.select("#treemapBox").append("div")
+            .attr("id", "treemap")
+            .style("position", "relative")
+            .style("margin","5px auto")
+            .style("width", width + "px")
+            .style("height", height + "px");
+            
+            d3.json("flare.json", function(json) {             
+                div.data([json]).selectAll("div.cell")
+                .data(treemap.nodes)
+                .enter().append("div")
+                .attr("class", "cell")
+                .style("background", function(d) {return d.children ? color(d.name) : null;}) 
+                .call(cell)
+                .text(function(d) {return d.children? null : d.name;})
+                .filter(function(d) { return !d.children; }).on("click",function(child,i){
+                    var treeArray=[];
+                    var temp=child;
+                    while(temp.parent){     //遍历叶子节点到父节点                        
+                         var name=temp.name;
+                         treeArray.push(name);
+                         temp=temp.parent; 
+                    }
+                    var treeRoot=temp.name;
+                    treeArray.push(treeRoot);//找到每个叶子节点对应的路径上的节点name，放到数组treeArray中
+                                        
+                    //创建包含多个叶子节点到根节点的路径
+                    var leafNodes=[];
+                    var leafParent=child.parent;
+                    var leafs=leafParent.children;
+                    for(var j=0;j<leafs.length;j++){
+                        var tempNode;
+                        if(leafs[j].children){
+                            //alert('ok');
+                            tempNode={name:leafs[j].name};
+                        }else{
+                            tempNode={name:leafs[j].name};
+                        }                                     
+                        leafNodes.push(tempNode);       //获得对应的兄弟节点
+                    }
+                    var tempTree={                      //包含父节点其他叶子的对象
+                        name:leafParent.name,
+                        children:leafNodes
+                    };
+                    for(var k=2;k<treeArray.length;){   //组装成json对象                  
+                        tempTree={
+                            name:treeArray[k++],
+                            children:[tempTree]
+                            }
+                    }                    
+                                        
+                    //仅创建一条由叶子到根节点的路径
+                    //var tempTree={name:treeArray[0]};
+//                    for(var k=1;k<treeArray.length;){                   
+//                        tempTree={
+//                            name:treeArray[k++],
+//                            children:[tempTree]
+//                            }
+//                    }
+                    
+                    var branch=tempTree;
+                    $('#tree-container').empty();
+                    buildTree("#tree-container", branch);
+                        
+                    //highlight effect
+                    var names=child.name;
+                    var nds=ui.nodeGroup.filter(function(e){return e.name==names});
+                    nds.each(function(e,i){
+                        //alert(e.name);
+                        setTimeout(function(){ highlightLinks(e);},0);
+                        //tempNode=e;
+                    });                                    
+                });
+          
+                d3.select("#size").on("click", function() {
+                    div.selectAll("div.cell")
+                    .data(treemap.value(function(d) {return d.size;}))
+                    .transition()
+                    .duration(1500)
+                    .call(cell);
+                    d3.select("#size").classed("active", true);
+                    d3.select("#count").classed("active", false);
+                });
+        
+                d3.select("#count").on("click", function() {
+                    div.selectAll("div.cell")
+                    .data(treemap.value(function(d) {return 1;}))
+                    .transition()
+                    .duration(1500)
+                    .call(cell);
+                    d3.select("#size").classed("active", false);
+                    d3.select("#count").classed("active", true);
+                });
+         
+                function cell(){
+                    this
+                    .style("left", function(d) {return d.x + "px";})
+                    .style("top", function(d) {return d.y + "px";})
+                    .style("width", function(d) {return Math.max(0, d.dx - 1) + "px";})
+                    .style("height", function(d) {return Math.max(0, d.dy - 1) + "px";});
+                }               
+            });
+        </script>
+        
+    </body>
+</html>

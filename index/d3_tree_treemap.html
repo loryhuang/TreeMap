@@ -1,0 +1,509 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+        <title>tree-treemap</title>
+        <link rel="stylesheet" href="../css/treemap.css" />
+        <style type="text/css">
+            g.node {
+                font-family: Verdana, Helvetica;
+                font-size: 12px;
+                font-weight: bold;
+                cursor: pointer
+            }
+            
+            circle.node-dot {
+                fill: lightsalmon;
+                stroke: red;
+                stroke-width: 1px;;
+            }
+            
+            circle.hover {
+                fill: darkblue;
+            }
+            
+            path.link {
+                fill: none;
+                stroke: gray;
+            }
+            
+            path.selected {
+                stroke: darkred;
+                fill: none;
+                stroke-width: 5px;
+            }
+            
+            #tree-container{
+                width: 750px;
+                height:auto;
+                margin:5px auto;
+            }
+            
+        </style>
+    </head>
+    <body>
+        <h3>tree和treemap交互，鼠标移动时对应的路径高亮 , tree可折叠</h3>
+        <div id="c" style="width:auto; height:auto; border:1px solid #3CF">
+            <div id="tree-container"></div>
+        </div>
+
+        <div style="clear:both ;width:100%;height:auto;border:1px solid #000; position: relative">
+            <button class='first active' id='size'>Size</button><button class='last' id='count'>Count</button>
+            <div id="treemapBox"></div>
+        </div>
+
+        <script type="text/javascript" src="../jquery/jquery-1.7.2.js"></script>
+        <script type="text/javascript" src="../jquery/underscore-min.js"></script>
+        <script type="text/javascript" src="../jquery/d3.v2.min.js"></script>
+
+        <script type="text/javascript">
+            var ui,size,tree,root,svgRoot,tempNode;
+            var i = 0;
+            var diagonal = d3.svg.diagonal().projection(function(d) { return [d.y, d.x];});
+            
+            function visit(parent, visitFn, childrenFn)
+            {
+                if (!parent) return;
+
+                visitFn(parent);
+
+                var children = childrenFn(parent);
+                if (children) {
+                    var count = children.length;
+                    for(var i = 0; i< count; i++) {
+                        visit(children[i], visitFn, childrenFn);
+                    }
+                }
+            }
+
+            function buildTree(containerName, treeData, customOptions)
+            {
+                // build the options object
+                var options = $.extend({
+                      nodeRadius: 5, fontSize: 12
+                }, customOptions);
+
+
+                // Calculate total nodes, max label length
+                var totalNodes = 0;
+                var maxLabelLength = 0;
+                visit(treeData, function(d)
+                {
+                    totalNodes++;
+                    maxLabelLength = Math.max(d.name.length, maxLabelLength);
+                }, function(d)
+                {
+                    return d.children && d.children.length > 0 ? d.children : null;
+                });
+
+                // size of the diagram
+                size = { width:$(containerName).outerWidth(), height: totalNodes * 15};
+
+                tree = d3.layout.tree()
+                .sort(null)
+                .size([size.height, size.width - maxLabelLength * options.fontSize])
+                .children(function(d)
+                {
+                    return (!d.children || d.children.length === 0) ? null : d.children;
+                });
+
+                var nodes = tree.nodes(treeData);
+                var links = tree.links(nodes);
+    
+                /*
+                 <svg>
+                 <g class="container" />
+                 </svg>
+                 */
+                //var svgRoot = d3.select(containerName)
+                svgRoot = d3.select(containerName)
+                .append("svg:svg").attr("width", size.width).attr("height", size.height);
+
+                // Add the clipping path
+                svgRoot.append("svg:clipPath").attr("id", "clipper")
+                .append("svg:rect")
+                .attr('id', 'clip-rect');
+
+                var layoutRoot = svgRoot
+                .append("svg:g")
+                .attr("class", "container")
+                .attr("transform", "translate(" + maxLabelLength + ",0)");
+
+
+                // Edges between nodes as a <path class="link" />
+//                var link = d3.svg.diagonal()
+//                .projection(function(d)
+//                {
+//                    return [d.y, d.x];
+//                });
+
+                var linkGroup = layoutRoot.append("svg:g");
+
+                linkGroup.selectAll("path.link")
+                .data(links)
+                .enter()
+                .append("svg:path")
+                .attr("class", "link")
+                .attr("d", diagonal);
+
+
+                var animGroup = layoutRoot.append("svg:g")
+                .attr("clip-path", "url(#clipper)");
+                /*
+                    Nodes as
+                    <g class="node">
+                    <circle class="node-dot" />
+                    <text />
+                    </g>
+                 */
+                var nodeGroup = layoutRoot.selectAll("g.node")
+                .data(nodes)
+                .enter()
+                .append("svg:g")
+                .attr("class", "node")
+                .attr("transform", function(d)
+                {
+                    return "translate(" + d.y + "," + d.x + ")";
+                });
+
+                // Cache the UI elements
+                ui = {
+                    svgRoot: svgRoot,
+                    nodeGroup: nodeGroup,
+                    linkGroup: linkGroup,
+                    animGroup: animGroup
+                };
+
+                // Attach the hover and click handlers
+                setupMouseEvents();
+
+                nodeGroup.append("svg:circle")
+                .attr("class", "node-dot")
+                .attr("r", options.nodeRadius);
+
+                nodeGroup.append("svg:text")
+                .attr("text-anchor", function(d)
+                {
+                    return d.children ? "end" : "start";
+                })
+                .attr("dx", function(d)
+                {
+                    var gap = 2 * options.nodeRadius;
+                    return d.children ?  -gap : gap;
+                })
+                
+                .attr("dy", 5 )
+                .text(function(d)
+                {
+                    return d.name;
+                });
+            }
+
+            function setupMouseEvents()
+            {
+                ui.nodeGroup.on('mouseover', function(d, i)
+                {
+                    //d3.select(this).select("circle").classed("hover", true);
+                })
+                .on('mouseout', function(d, i)
+                {
+                    //d3.select(this).select("circle").classed("hover", false);
+                })
+                .on('click', function(nd, i)
+                {
+                    if(!nd.children&&!nd._children){
+                        return;
+                    }else{
+                        toggle(nd);
+                        update(nd);
+                    }
+                    
+                    //             //Walk parent chain
+                    //            var ancestors = [];
+                    //            var parent = nd;
+                    //            while (!_.isUndefined(parent)) {
+                    //                ancestors.push(parent);
+                    //                parent = parent.parent;
+                    //            }
+                    //            // Get the matched links
+                    //            var matchedLinks = [];
+                    //            ui.linkGroup.selectAll('path.link')
+                    //                .filter(function(d, i)
+                    //                {
+                    //                    return _.any(ancestors, function(p)
+                    //                    {
+                    //                        return p === d.target;
+                    //                    });
+                    //                })
+                    //                .each(function(d)
+                    //                {
+                    //                    matchedLinks.push(d);
+                    //                });
+                    //            animateParentChain(matchedLinks);
+                });
+            }
+            function highlightLinks(nd){
+                // Walk parent chain
+                var ancestors = [];
+                var parent = nd;
+                while (!_.isUndefined(parent)) {
+                    ancestors.push(parent);
+                    parent = parent.parent;
+                }
+                //alert('block clicked, function triggers!');
+                // Get the matched links
+                var matchedLinks = [];
+                ui.linkGroup.selectAll('path.link')
+                .filter(function(d, i)
+                {
+                    return _.any(ancestors, function(p)
+                    {
+                        return p === d.target;
+                    });
+                })
+                .each(function(d)
+                {
+                    matchedLinks.push(d);
+                });
+                //alert(matchedLinks);
+                animateParentChain(matchedLinks);
+            }	
+            function animateParentChain(links)
+            {
+                var linkRenderer = d3.svg.diagonal()
+                .projection(function(d)
+                {
+                    return [d.y, d.x];
+                });
+
+                // Links
+                ui.animGroup.selectAll("path.selected")
+                .data([])
+                .exit().remove();
+
+                ui.animGroup
+                .selectAll("path.selected")
+                .data(links)
+                .enter().append("svg:path")
+                .attr("class", "selected")
+                .attr("d", linkRenderer);
+
+                // Animate the clipping path
+                var overlayBox = ui.svgRoot.node().getBBox();
+                ui.svgRoot.select("#clip-rect")
+                .attr("x", overlayBox.x + overlayBox.width)
+                .attr("y", overlayBox.y)
+                .attr("width", 0)
+                .attr("height", overlayBox.height)
+                .transition().duration(500)
+                .attr("x", overlayBox.x)
+                .attr("width", overlayBox.width);
+            }
+
+            //added 2012-09-10
+            function toggle(d) {
+                if (d.children) {
+                    d._children = d.children;
+                    d.children = null;
+                } else {
+                    d.children = d._children;
+                    d._children = null;
+                }
+            }
+
+            function update(source) {
+                //var duration = d3.event && d3.event.altKey ? 5000 : 500;
+                var duration =500;
+                
+                // Compute the new tree layout.
+                var nodes = tree.nodes(root).reverse();
+
+                //normalize for fixed-depth.
+                //nodes.forEach(function(d) { d.y = d.depth * 132; });
+
+                // Update the nodes…
+                var node = svgRoot.selectAll("g.node")
+                .data(nodes, function(d){
+                    return d.id || (d.id = ++i); 
+                 });
+                
+
+                // Enter any new nodes at the parent's previous position.
+                var nodeEnter = node.enter().append("svg:g")
+                .attr("class", "node")
+                .attr("transform", function() { return "translate(" + source.y0 + "," + source.x0 + ")"; })
+                .on("click", function(d) { 
+                       toggle(d);
+                       update(d);
+                });
+
+                nodeEnter.append("svg:circle")
+                .attr("class", "node-dot")
+                .attr("r", 5)
+                .style("fill", function(d) { return d._children ? "lightsteelblue" : "lightsalmon"; });
+
+                nodeEnter.append("svg:text")
+                .attr("dx", function(d){ return d.children || d._children ? -10 : 10; })
+                .attr("dy", 5)
+                .attr("text-anchor", function(d) { return d.children || d._children ? "end" : "start"; })
+                .text(function(d) { return d.name; });
+                //.style("fill-opacity", 1e-6);
+
+                // Transition nodes to their new position.
+                var nodeUpdate = node.transition()
+                .duration(duration)
+                .attr("transform", function(d) { return "translate(" + d.y + "," + d.x + ")"; });
+
+                nodeUpdate.select("circle")
+                .attr("r", 5)
+                .style("fill", function(d) { return d._children ? "lightsteelblue" : "lightsalmon"; });
+
+                nodeUpdate.select("text")
+               .style("fill-opacity", 1);
+
+                // Transition exiting nodes to the parent's new position.
+                var nodeExit = node.exit().transition()
+                .duration(duration)
+                .attr("transform", function(d) { return "translate(" + d.y + "," + d.x + ")"; })
+                .remove();
+
+                nodeExit.select("circle")
+                .attr("r", 1e-6);
+
+                nodeExit.select("text")
+               .style("fill-opacity", 1e-6);
+
+                // Update the links…
+                var link = svgRoot.selectAll("path.link")
+                .data(tree.links(nodes), function(d) { 
+                      return d.target.id; 
+                });
+
+                //            
+                // Enter any new links at the parent's previous position.
+                link.enter().insert("svg:path", "g")
+                .attr("class", "link")
+                .attr("d", function(d){
+                    var o = {x: source.x0, y: source.y0};
+                    return diagonal({source: o, target: o});
+                })
+                .transition()
+                .duration(duration)
+                .attr("d", diagonal);
+
+                // Transition links to their new position.
+                link.transition()
+                .duration(duration)
+                .attr("d", diagonal);
+
+                // Transition exiting nodes to the parent's new position.
+                link.exit().transition()
+                .duration(duration)
+                .attr("d", function(d){
+                    var o = {x: source.x, y: source.y};
+                    return diagonal({source: o, target: o});
+                })
+                .remove();
+
+                // Stash the old positions for transition.
+                nodes.forEach(function(d) {
+                    d.x0 = d.x;
+                    d.y0 = d.y;
+                });
+                
+                if(tempNode){
+                  highlightLinks(tempNode);  
+                }             
+            }
+            
+            d3.json("flare.json", function(json) {
+               //create tree
+                buildTree("#tree-container", json);
+               
+                function toggleAll(d){
+                    if (d.children) {
+                        d.children.forEach(toggleAll);
+                        toggle(d);
+                    }
+                }
+                               
+                root = json;
+                root.x0 = 0;
+                root.y0 = 0;
+                //root.children.forEach(toggleAll);
+                //toggle(root);
+                update(root);
+            });
+
+            //create a treemap
+            var  width = $('#treemapBox').width()-50,
+            height = 500,
+            color = d3.scale.category20();
+
+            var treemap = d3.layout.treemap()
+            .size([width, height])
+            .sticky(true)
+            .value(function(d) {return d.size;});
+
+            var div = d3.select("#treemapBox").append("div")
+            .attr("id", "treemap")
+            .style("position", "relative")
+            .style("margin","5px auto")
+            .style("width", width + "px")
+            .style("height", height + "px");
+            
+            d3.json("flare.json", function(json) {
+                div.data([json]).selectAll("div.cell")
+                .data(treemap.nodes)
+                .enter().append("div")
+                .attr("class", "cell")
+                .style("background", function(d) {return d.children ? color(d.name) : null;}) 
+                .call(cell)
+                .text(function(d) {return d.children ? null : d.name;})
+                .filter(function(d) { return !d.children; }).on("mouseover",function(d,i){
+                    var names=d.name;
+                    //alert(names);
+                    //var nds=d3.selectAll("g.node").filter(function(e){return e.name==names});					 
+                    var nds=ui.nodeGroup.filter(function(e){return e.name==names});
+                    nds.each(function(e,i){
+                        setTimeout(function(){ highlightLinks(e); },1000);
+                        tempNode=e;
+                        d3.selectAll("circle").classed("hover", false);
+                        d3.select(this).select("circle").classed("hover", true); 
+                    });
+                    //alert(nds.text());
+                    //highlightLinks(nds);
+                });
+          
+                d3.select("#size").on("click", function() {
+                    div.selectAll("div.cell")
+                    .data(treemap.value(function(d) {return d.size;}))
+                    .transition()
+                    .duration(1500)
+                    .call(cell);
+                    d3.select("#size").classed("active", true);
+                    d3.select("#count").classed("active", false);
+                });
+        
+                d3.select("#count").on("click", function() {
+                    div.selectAll("div.cell")
+                    .data(treemap.value(function(d) {return 1;}))
+                    .transition()
+                    .duration(1500)
+                    .call(cell);
+                    d3.select("#size").classed("active", false);
+                    d3.select("#count").classed("active", true);
+                });
+         
+                function cell(){
+                    this
+                    .style("left", function(d) {return d.x + "px";})
+                    .style("top", function(d) {return d.y + "px";})
+                    .style("width", function(d) {return Math.max(0, d.dx - 1) + "px";})
+                    .style("height", function(d) {return Math.max(0, d.dy - 1) + "px";});
+                }               
+            });
+        </script>
+
+    </body>
+</html>
